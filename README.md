@@ -33,16 +33,16 @@ Essa decisao evita quatro bots soltos e mostra separacao de responsabilidades se
 
 ```mermaid
 flowchart TD
-    user["Cliente"] --> ui["Streamlit Chat"]
-    ui --> graph["BankingAssistantGraph"]
-    graph --> triage["triage: autenticar e rotear"]
-    triage -->|"credito"| credit["credit: limite e aumento"]
-    triage -->|"entrevista"| interview["credit_interview: atualizar score"]
-    triage -->|"cambio"| exchange["exchange: cotacao via Tavily"]
-    credit -->|"rejeitado e aceita entrevista"| interview
-    credit --> endNode["end"]
-    interview --> credit
-    exchange --> endNode
+    cliente["Cliente"] --> streamlitChat["Streamlit Chat"]
+    streamlitChat --> bankingAssistant["BankingAssistantGraph"]
+    bankingAssistant --> triageNode["Triagem e autenticacao"]
+    triageNode -->|"credito"| creditNode["Credito: limite e aumento"]
+    triageNode -->|"entrevista"| interviewNode["Entrevista: atualizar score"]
+    triageNode -->|"cambio"| exchangeNode["Cambio: cotacao via Tavily"]
+    creditNode -->|"rejeitado e aceita entrevista"| interviewNode
+    creditNode --> endNode["Encerramento"]
+    interviewNode --> creditNode
+    exchangeNode --> endNode
 ```
 
 O DeepSeek via OpenRouter classifica intencoes depois da autenticacao. O modelo retorna JSON com `intent` e `confidence`, validado localmente com Pydantic. Se nao houver LLM configurado ou ocorrer falha tecnica, existe fallback deterministico por palavras-chave.

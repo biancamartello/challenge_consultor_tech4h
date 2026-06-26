@@ -23,16 +23,16 @@ A solucao usa um unico `BankingAssistantGraph` em LangGraph. Os agentes do enunc
 
 ```mermaid
 flowchart TD
-    user["Cliente"] --> ui["Streamlit"]
-    ui --> graph["BankingAssistantGraph"]
-    graph --> triage["triage"]
-    triage -->|"credito"| credit["credit"]
-    triage -->|"entrevista"| interview["credit_interview"]
-    triage -->|"cambio"| exchange["exchange"]
-    credit -->|"rejeitado e aceita entrevista"| interview
-    interview --> credit
-    credit --> endNode["end"]
-    exchange --> endNode
+    cliente["Cliente"] --> streamlitUi["Streamlit"]
+    streamlitUi --> bankingAssistant["BankingAssistantGraph"]
+    bankingAssistant --> triageNode["Triagem"]
+    triageNode -->|"credito"| creditNode["Credito"]
+    triageNode -->|"entrevista"| interviewNode["Entrevista de credito"]
+    triageNode -->|"cambio"| exchangeNode["Cambio"]
+    creditNode -->|"rejeitado e aceita entrevista"| interviewNode
+    interviewNode --> creditNode
+    creditNode --> endNode["Encerramento"]
+    exchangeNode --> endNode
 ```
 
 ## Regras
