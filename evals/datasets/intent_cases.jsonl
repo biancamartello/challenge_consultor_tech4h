@@ -1,0 +1,6 @@
+{"inputs":{"text":"quero aumentar meu poder de compra no cartao"},"outputs":{"intent":"credit"}}
+{"inputs":{"text":"preciso de um limite maior para compras"},"outputs":{"intent":"credit"}}
+{"inputs":{"text":"quanto esta o dolar hoje?"},"outputs":{"intent":"exchange"}}
+{"inputs":{"text":"quero recalcular meu score"},"outputs":{"intent":"credit_interview"}}
+{"inputs":{"text":"pode encerrar o atendimento"},"outputs":{"intent":"end"}}
+{"inputs":{"text":"quero falar com gerente"},"outputs":{"intent":"unknown"}}

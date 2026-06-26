@@ -1,0 +1,4 @@
+score_min,score_max,limite_maximo
+0,499,1000
+500,699,5000
+700,1000,10000
