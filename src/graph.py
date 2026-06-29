@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from pathlib import Path
 
@@ -14,18 +13,17 @@ from src.conversation import (
     credit_interview_declined_response,
     credit_interview_offer_response,
     current_limit_response,
-    exchange_response,
     interview_question_response,
     interview_reask_response,
     interview_result_response,
     missing_credentials_response,
 )
-from src.llm import get_chat_model
+from src.exchange_subgraph import exchange_app
+from src.llm import optional_chat_model
 from src.schemas import CreditInterviewAnswers, IntentResult, LimitIncreaseRequest
 from src.state import AgentState, HistoryTurn, Intent
 from src.tools.auth import authenticate_client
 from src.tools.credit import get_client_by_cpf, get_current_limit, max_limit_for_score, request_credit_increase
-from src.tools.exchange import ExchangeConfigurationError, ExchangeLookupError, search_exchange_rate
 from src.tools.scoring import calculate_credit_score, update_client_score
 
 
@@ -88,12 +86,7 @@ def _classify_intent_with_keywords(text: str) -> Intent:
 
 
 def _optional_runtime_llm():
-    if not os.getenv("OPENROUTER_API_KEY"):
-        return None
-    try:
-        return get_chat_model()
-    except Exception:
-        return None
+    return optional_chat_model()
 
 
 def _classify_intent_with_llm(text: str, llm) -> Intent | None:
@@ -548,16 +541,8 @@ def credit_interview_node(state: AgentState) -> AgentState:
 
 
 def exchange_node(state: AgentState) -> AgentState:
-    currency = _extract_currency(state.get("user_input", ""))
-    try:
-        quote = search_exchange_rate(currency)
-    except (ExchangeConfigurationError, ExchangeLookupError) as exc:
-        logger.warning("exchange lookup failed: %s", exc)
-        return {"response": f"Nao consegui consultar o cambio agora: {exc}"}
-    except Exception:
-        logger.exception("exchange_node failure")
-        return {"response": "Tive um problema ao consultar a cotacao agora. Pode tentar novamente em instantes?"}
-    return {"response": exchange_response(answer=quote.answer, source=quote.source_url or "Tavily")}
+    out = exchange_app.invoke({"user_input": state.get("user_input", "")})
+    return {"response": out["response"]}
 
 
 def end_node(state: AgentState) -> AgentState:
@@ -683,16 +668,6 @@ def _first_int(text: str) -> int | None:
             return value
     match = re.search(r"\b(\d+)\b", normalized)
     return int(match.group(1)) if match else None
-
-
-def _extract_currency(text: str) -> str:
-    normalized = text.lower()
-    if "euro" in normalized or "eur" in normalized:
-        return "EUR"
-    if "libra" in normalized or "gbp" in normalized:
-        return "GBP"
-    match = re.search(r"\b[A-Z]{3}\b", text.upper())
-    return match.group(0) if match else "USD"
 
 
 def _find_employment(text: str) -> str | None:
