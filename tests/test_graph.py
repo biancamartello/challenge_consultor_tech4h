@@ -1,5 +1,15 @@
+import csv
+
 import src.graph as graph_module
-from src.graph import classify_intent, route_after_triage, triage_node
+from src.graph import (
+    classify_intent,
+    credit_interview_node,
+    credit_node,
+    extract_requested_limit,
+    route_after_credit,
+    route_after_triage,
+    triage_node,
+)
 
 
 class FakeTextLLM:
@@ -16,6 +26,42 @@ class FakeJsonLLM:
         self.messages = messages
         content = f'{{"intent": "{self.intent}", "confidence": 0.92}}'
         return type("Response", (), {"content": content})()
+
+
+class FakeAmountLLM:
+    def __init__(self, amount):
+        self.amount = amount
+
+    def invoke(self, _messages):
+        content = f'{{"requested_limit": {self.amount}}}'
+        return type("Response", (), {"content": content})()
+
+
+def _write_clients(path, *, cpf="12345678900", score="650", limite="2500.00"):
+    with path.open("w", newline="") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=["cpf", "nome", "data_nascimento", "limite_credito", "score"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "cpf": cpf,
+                "nome": "Bianca",
+                "data_nascimento": "1990-05-10",
+                "limite_credito": limite,
+                "score": score,
+            }
+        )
+
+
+def _write_score_table(path):
+    with path.open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=["score_min", "score_max", "limite_maximo"])
+        writer.writeheader()
+        writer.writerow({"score_min": "0", "score_max": "499", "limite_maximo": "1000"})
+        writer.writerow({"score_min": "500", "score_max": "699", "limite_maximo": "5000"})
+        writer.writerow({"score_min": "700", "score_max": "1000", "limite_maximo": "10000"})
 
 
 def test_classifies_credit_intent_from_limit_message():
@@ -92,3 +138,353 @@ def test_triage_classifies_intent_after_authentication(monkeypatch):
     )
 
     assert response["intent"] == "exchange"
+
+
+def test_triage_authenticates_with_brazilian_dash_birth_date(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    with clients_path.open("w", newline="") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=["cpf", "nome", "data_nascimento", "limite_credito", "score"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "cpf": "12345678900",
+                "nome": "Bianca",
+                "data_nascimento": "1990-05-10",
+                "limite_credito": "2500.00",
+                "score": "650",
+            }
+        )
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "meu cpf e 12345678900 e nasci em 10-05-1990",
+        }
+    )
+
+    assert response["authenticated"] is True
+    assert response["client"]["nome"] == "Bianca"
+
+
+def test_triage_rejects_wrong_credentials_and_counts_attempt(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "meu cpf e 00000000000 e nasci em 01/01/2000",
+        }
+    )
+
+    assert response["authenticated"] is False
+    assert response["auth_attempts"] == 1
+    assert not response.get("should_end")
+    assert "response" in response
+
+
+def test_triage_ends_after_third_failed_attempt(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    # ja houve duas falhas; esta e a terceira tentativa consecutiva
+    response = triage_node(
+        {
+            "authenticated": False,
+            "auth_attempts": 2,
+            "user_input": "meu cpf e 00000000000 e nasci em 01/01/2000",
+        }
+    )
+
+    assert response["auth_attempts"] == 3
+    assert response["should_end"] is True
+
+
+def test_triage_asks_for_missing_credentials_when_only_cpf(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "oi, meu cpf e 12345678900",
+        }
+    )
+
+    assert response["authenticated"] is False
+    assert response["cpf"] == "12345678900"
+    assert response["birth_date"] == ""
+    assert response["missing_credentials_count"] == 1
+    assert "response" in response
+
+
+def test_triage_handles_authentication_error_gracefully(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("base de clientes indisponivel")
+
+    monkeypatch.setattr(graph_module, "authenticate_client", boom)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "meu cpf e 12345678900 e nasci em 10/05/1990",
+        }
+    )
+
+    # erro controlado: conversa segue, sem expor exception nem autenticar
+    assert "validar" in response["response"].lower()
+    assert response.get("authenticated") is not True
+
+
+def test_rejected_credit_increase_offers_interview_consent(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    score_path = tmp_path / "score_limite.csv"
+    requests_path = tmp_path / "solicitacoes.csv"
+    _write_clients(clients_path, score="650", limite="2500.00")
+    _write_score_table(score_path)
+
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+    monkeypatch.setattr(graph_module, "SCORE_LIMIT_PATH", score_path)
+    monkeypatch.setattr(graph_module, "REQUESTS_PATH", requests_path)
+
+    state = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "user_input": "quero aumentar meu limite para 8 mil",
+            "intent": "credit",
+        }
+    )
+
+    assert state["credit_status"] == "rejeitado"
+    assert state["requested_limit"] == 8000
+    assert state["active_flow"] == "credit_interview_offer"
+    # consentimento ainda nao foi dado: nao deve ir direto para a entrevista
+    assert route_after_credit(state) == "end"
+
+
+def test_interview_consent_yes_routes_to_interview(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    state = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "active_flow": "credit_interview_offer",
+            "user_input": "sim, quero fazer",
+        }
+    )
+
+    assert state["active_flow"] == "credit_interview"
+    assert route_after_credit(state) == "credit_interview"
+
+
+def test_interview_consent_no_closes_gracefully(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    state = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "active_flow": "credit_interview_offer",
+            "user_input": "agora nao, obrigada",
+        }
+    )
+
+    assert state["active_flow"] == ""
+    assert route_after_credit(state) == "end"
+    assert "response" in state
+
+
+def test_consult_limit_keeps_credit_flow_for_follow_up(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    state = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "user_input": "qual e meu limite?",
+            "intent": "credit",
+        }
+    )
+
+    assert state["active_flow"] == "credit_increase"
+
+
+def test_active_flow_routes_unknown_follow_up_to_credit():
+    route = route_after_triage(
+        {
+            "authenticated": True,
+            "intent": "unknown",
+            "active_flow": "credit_increase",
+        }
+    )
+
+    assert route == "credit"
+
+
+def test_credit_flow_processes_k_amount_and_offers_interview(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    score_path = tmp_path / "score_limite.csv"
+    requests_path = tmp_path / "solicitacoes.csv"
+    _write_clients(clients_path, cpf="98765432100", score="420", limite="1000.00")
+    _write_score_table(score_path)
+
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+    monkeypatch.setattr(graph_module, "SCORE_LIMIT_PATH", score_path)
+    monkeypatch.setattr(graph_module, "REQUESTS_PATH", requests_path)
+
+    state = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "98765432100",
+            "user_input": "eu gostaria de ter uns 5k",
+            "intent": "unknown",
+            "active_flow": "credit_increase",
+        }
+    )
+
+    assert state["requested_limit"] == 5000
+    assert state["credit_status"] == "rejeitado"
+    assert state["active_flow"] == "credit_interview_offer"
+
+
+def test_credit_node_does_not_resubmit_after_approval(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clients_path = tmp_path / "clientes.csv"
+    score_path = tmp_path / "score_limite.csv"
+    requests_path = tmp_path / "solicitacoes.csv"
+    _write_clients(clients_path, score="650", limite="2500.00")
+    _write_score_table(score_path)
+
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+    monkeypatch.setattr(graph_module, "SCORE_LIMIT_PATH", score_path)
+    monkeypatch.setattr(graph_module, "REQUESTS_PATH", requests_path)
+
+    real_request = graph_module.request_credit_increase
+    calls = []
+
+    def counting_request(*args, **kwargs):
+        calls.append(args)
+        return real_request(*args, **kwargs)
+
+    monkeypatch.setattr(graph_module, "request_credit_increase", counting_request)
+
+    approved = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "user_input": "quero aumentar para 4 mil",
+            "intent": "credit",
+        }
+    )
+    assert approved["credit_status"] == "aprovado"
+    assert len(calls) == 1
+
+    # turno seguinte: apenas consulta, mas o requested_limit aprovado segue no estado
+    follow_up = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "requested_limit": approved["requested_limit"],
+            "credit_status": "aprovado",
+            "active_flow": "",
+            "user_input": "qual e meu limite?",
+            "intent": "credit",
+        }
+    )
+
+    # nao deve re-submeter: so a aprovacao original foi registrada
+    assert len(calls) == 1
+    assert "response" in follow_up
+    with requests_path.open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert len(rows) == 1
+
+
+def test_extract_requested_limit_uses_llm_for_written_amount():
+    assert extract_requested_limit("quero uns cinco mil", llm=FakeAmountLLM(5000)) == 5000
+
+
+def test_extract_requested_limit_falls_back_without_llm():
+    assert extract_requested_limit("quero 5k") == 5000
+
+
+def test_interview_starts_by_asking_first_field(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    state = credit_interview_node(
+        {
+            "cpf": "12345678900",
+            "active_flow": "credit_interview",
+            "interview_answers": {},
+            "interview_pending_field": "",
+            "user_input": "sim",
+        }
+    )
+
+    assert state["interview_pending_field"] == "renda_mensal"
+
+
+def test_interview_collects_field_and_advances(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    state = credit_interview_node(
+        {
+            "cpf": "12345678900",
+            "active_flow": "credit_interview",
+            "interview_answers": {},
+            "interview_pending_field": "renda_mensal",
+            "user_input": "minha renda e 5000",
+        }
+    )
+
+    assert state["interview_answers"]["renda_mensal"] == 5000
+    assert state["interview_pending_field"] == "tipo_emprego"
+
+
+def test_interview_completion_updates_score(tmp_path, monkeypatch):
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path, score="420", limite="1000.00")
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    answers = {
+        "renda_mensal": 5000.0,
+        "tipo_emprego": "formal",
+        "despesas": 2000.0,
+        "dependentes": 1,
+    }
+    state = credit_interview_node(
+        {
+            "cpf": "12345678900",
+            "active_flow": "credit_interview",
+            "interview_answers": answers,
+            "interview_pending_field": "tem_dividas",
+            "user_input": "nao tenho dividas",
+        }
+    )
+
+    assert state["intent"] == "credit"
+    assert state["active_flow"] == ""
+    with clients_path.open() as file:
+        rows = list(csv.DictReader(file))
+    assert rows[0]["score"] != "420"

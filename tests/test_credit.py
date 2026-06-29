@@ -1,6 +1,8 @@
 import csv
 
-from src.tools.credit import request_credit_increase
+import pytest
+
+from src.tools.credit import CreditDataError, get_client_by_cpf, request_credit_increase
 
 
 def write_clients(path, score="650"):
@@ -79,3 +81,11 @@ def test_rejects_limit_request_when_score_does_not_allow_amount(tmp_path):
     assert decision.max_allowed_limit == 5000
     rows = read_requests(requests_path)
     assert rows[0]["status_pedido"] == "rejeitado"
+
+
+def test_get_client_raises_when_cpf_not_found(tmp_path):
+    clients_path = tmp_path / "clientes.csv"
+    write_clients(clients_path)
+
+    with pytest.raises(CreditDataError):
+        get_client_by_cpf("00000000000", clients_path)

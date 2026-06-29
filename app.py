@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 from dotenv import load_dotenv
 
+from src.conversation import build_short_history, to_streamlit_safe, welcome_response
 from src.graph import build_graph
 from src.observability import build_turn_metadata, record_turn_trace, sanitize_text
 
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
 
 @st.cache_resource
@@ -26,7 +30,7 @@ def initialize_session() -> None:
         st.session_state.messages = [
             {
                 "role": "assistant",
-                "content": "Ola, eu sou o assistente do Banco Agil. Informe CPF e data de nascimento para comecar.",
+                "content": to_streamlit_safe(welcome_response()),
             }
         ]
 
@@ -52,7 +56,13 @@ def main() -> None:
         st.write(prompt)
 
     try:
-        next_state = graph.invoke({**st.session_state.agent_state, "user_input": prompt})
+        next_state = graph.invoke(
+            {
+                **st.session_state.agent_state,
+                "user_input": prompt,
+                "conversation_history": build_short_history(st.session_state.messages),
+            }
+        )
         st.session_state.agent_state.update(next_state)
         response = st.session_state.agent_state.get("response", "Nao consegui processar sua solicitacao.")
         metadata = build_turn_metadata(
@@ -65,11 +75,13 @@ def main() -> None:
             metadata=metadata,
         )
     except Exception as exc:  # UI boundary: keep failures friendly for the evaluator.
+        logging.getLogger("banco_agil").exception("graph invocation failed")
         response = f"Encontrei um problema ao processar sua solicitacao: {exc}"
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    safe_response = to_streamlit_safe(response)
+    st.session_state.messages.append({"role": "assistant", "content": safe_response})
     with st.chat_message("assistant"):
-        st.write(response)
+        st.write(safe_response)
 
 
 if __name__ == "__main__":

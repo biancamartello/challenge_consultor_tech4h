@@ -11,6 +11,7 @@ A solucao usa um unico `BankingAssistantGraph` em LangGraph. Os agentes do enunc
 - `src/state.py`: estado compartilhado do atendimento.
 - `src/llm.py`: configuracao do DeepSeek via OpenRouter.
 - `src/observability.py`: tracing sanitizado para LangSmith.
+- `src/conversation.py`: respostas humanizadas e normalizacao de texto para a UI.
 - `src/tools/auth.py`: autenticacao via CSV.
 - `src/tools/credit.py`: limite, solicitacao e decisao de aumento.
 - `src/tools/scoring.py`: calculo e atualizacao de score.
@@ -27,11 +28,12 @@ flowchart TD
     streamlitUi --> bankingAssistant["BankingAssistantGraph"]
     bankingAssistant --> triageNode["Triagem"]
     triageNode -->|"credito"| creditNode["Credito"]
-    triageNode -->|"entrevista"| interviewNode["Entrevista de credito"]
     triageNode -->|"cambio"| exchangeNode["Cambio"]
-    creditNode -->|"rejeitado e aceita entrevista"| interviewNode
+    creditNode -->|"rejeitado"| offerNode["Oferta de entrevista"]
+    offerNode -->|"aceita"| interviewNode["Entrevista de credito"]
+    offerNode -->|"recusa"| endNode["Encerramento"]
     interviewNode --> creditNode
-    creditNode --> endNode["Encerramento"]
+    creditNode --> endNode
     exchangeNode --> endNode
 ```
 
@@ -42,9 +44,11 @@ flowchart TD
 - O fallback por palavras-chave existe apenas para execucao local sem `OPENROUTER_API_KEY` ou falha tecnica do provedor.
 - Se o LLM retornar `unknown`, essa decisao e preservada; o grafo deve pedir esclarecimento em vez de forcar uma rota por heuristica.
 - LLM tambem pode apoiar respostas conversacionais, mas nao decide regras bancarias.
+- Respostas conversacionais geradas por LLM sao normalizadas para texto simples antes de serem renderizadas no Streamlit.
 - Python executa regras auditaveis: autenticacao, score, limite, CSV e API externa.
 - Tavily fica encapsulado em `src/tools/exchange.py`, permitindo teste com cliente falso.
 - OpenRouter fica encapsulado em `src/llm.py`, permitindo troca de modelo via `.env`.
+- `src/llm.py` reutiliza o client LLM em cache por modelo e temperatura para reduzir latencia.
 - LangSmith registra observabilidade leve de turnos do atendimento com metadados sanitizados.
 - Evals no LangSmith focam na triagem agentic; regras deterministicas continuam validadas por `pytest`.
 
@@ -67,3 +71,19 @@ O parsing do JSON e feito pela aplicacao com Pydantic. Essa escolha preserva sai
 O tracing usa `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_ENDPOINT` e `LANGSMITH_PROJECT`. A UI registra um resumo sanitizado de cada turno, incluindo rota, intencao e estado de autenticacao, sem expor CPF completo.
 
 A avaliacao offline usa um dataset pequeno de classificacao de intencao. O target chama `classify_intent()` e o evaluator `intent_accuracy` compara a intencao prevista com a esperada. Isso demonstra dominio de evals sem aumentar a complexidade do desafio.
+
+## Memoria de Fluxo
+
+O estado guarda `active_flow` para manter a conversa no trilho sem reclassificar a intencao a cada turno. Valores:
+
+- `credit_increase`: aguardando o valor de aumento; continuacoes como "vamos la" ou "uns 5k" seguem para o credito.
+- `credit_interview_offer`: aguardando o sim/nao do cliente sobre fazer a entrevista.
+- `credit_interview`: entrevista em andamento, coletando os campos um a um.
+
+A triagem da prioridade ao `active_flow` (exceto quando o cliente pede para encerrar), e a extracao de valores/campos e feita pelo LLM com fallback deterministico.
+
+## Fluxo de Credito
+
+Dentro do dominio `credit`, o grafo diferencia consulta de limite e aumento de limite. O valor desejado e extraido pelo LLM (`extract_requested_limit`) e validado por `LimitIncreaseRequest`.
+
+Quando o aumento e rejeitado (ou quando o score nao permite aumento), o credito oferece a entrevista e aguarda o consentimento. Se o cliente aceitar, a entrevista conduz a coleta passo a passo, valida com `CreditInterviewAnswers`, recalcula o score deterministicamente e volta para nova analise.
