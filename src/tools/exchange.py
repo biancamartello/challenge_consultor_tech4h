@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
+from typing import Literal
 
 from langchain_core.tools import tool
+
+
+ConversionDirection = Literal["quote_only", "to_foreign", "to_base"]
+
+_CURRENCY_TERMS: dict[str, tuple[str, ...]] = {
+    "USD": ("dolar", "dólar", "usd"),
+    "EUR": ("euro", "eur"),
+    "GBP": ("libra", "esterlina", "gbp"),
+    "JPY": ("iene", "yen", "jpy"),
+    "CHF": ("franco", "suico", "suíço", "chf"),
+    "ARS": ("peso argentino", "ars"),
+    "CAD": ("dolar canadense", "dólar canadense", "cad"),
+}
 
 
 @dataclass(frozen=True)
@@ -86,3 +101,105 @@ def consultar_cotacao(moeda: str, moeda_base: str = "BRL") -> dict:
     """
     quote = search_exchange_rate(moeda, moeda_base)
     return {"answer": quote.answer, "source_url": quote.source_url}
+
+
+def extract_conversion_amount(text: str) -> float | None:
+    normalized = text.lower()
+    match = re.search(r"(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?)\s*k\b", normalized)
+    if match:
+        return float(match.group(1).replace(",", ".")) * 1000
+
+    match = re.search(r"(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?)\s*mil\b", normalized)
+    if match:
+        return float(match.group(1).replace(",", ".")) * 1000
+
+    match = re.search(r"(?:r\$\s*)?(\d+(?:[.,]\d{2})?)", normalized)
+    if not match:
+        return None
+    return float(match.group(1).replace(",", "."))
+
+
+def parse_unit_rate(answer: str, currency: str, base_currency: str = "BRL") -> float | None:
+    text = answer.replace(",", ".")
+    curr = re.escape(currency.upper())
+    base = re.escape(base_currency.upper())
+    patterns = (
+        rf"1\s*{curr}\s*(?:=|equivale?\s*a?|is|:)\s*([\d.]+)\s*{base}",
+        rf"1\s*{curr}\s*(?:=|equivale?\s*a?|is|:)\s*([\d.]+)",
+        rf"{curr}[^\d]*([\d.]+)\s*{base}",
+        rf"([\d.]+)\s*{base}[^\d]*{curr}",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            rate = float(match.group(1))
+        except ValueError:
+            continue
+        if rate > 0:
+            return rate
+    return None
+
+
+def detect_conversion_direction(text: str, currency: str) -> ConversionDirection:
+    if extract_conversion_amount(text) is None:
+        return "quote_only"
+
+    normalized = text.lower()
+    foreign_terms = _CURRENCY_TERMS.get(currency.upper(), (currency.lower(),))
+    brl_terms = ("reais", "real", "brl", "r$")
+    has_brl = any(term in normalized for term in brl_terms)
+    has_foreign = any(term in normalized for term in foreign_terms)
+
+    to_foreign_patterns = (
+        r"(reais?|r\$|brl).*(?:em|para|pra)\s*(?:o\s+|a\s+)?(" + "|".join(map(re.escape, foreign_terms)) + r")",
+        r"(\d[\d.,]*\s*(?:mil|k)?).*(?:em|para|pra)\s*(?:o\s+|a\s+)?(" + "|".join(map(re.escape, foreign_terms)) + r")",
+    )
+    to_base_patterns = (
+        r"(" + "|".join(map(re.escape, foreign_terms)) + r").*(?:em|para|pra)\s*(?:o\s+|os\s+)?(reais?|r\$|brl)",
+    )
+
+    if has_brl and has_foreign:
+        brl_pos = min(normalized.find(term) for term in brl_terms if term in normalized)
+        foreign_pos = min(normalized.find(term) for term in foreign_terms if term in normalized)
+        return "to_foreign" if brl_pos < foreign_pos else "to_base"
+
+    if any(re.search(pattern, normalized) for pattern in to_foreign_patterns):
+        return "to_foreign"
+    if any(re.search(pattern, normalized) for pattern in to_base_patterns):
+        return "to_base"
+    if has_foreign:
+        return "to_foreign"
+    return "quote_only"
+
+
+def format_brl(value: float) -> str:
+    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def format_foreign(value: float, currency: str) -> str:
+    formatted = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{formatted} {currency.upper()}"
+
+
+def build_conversion_message(
+    *,
+    amount: float,
+    direction: ConversionDirection,
+    currency: str,
+    rate: float,
+) -> str | None:
+    if direction == "quote_only":
+        return None
+    if direction == "to_foreign":
+        converted = amount / rate
+        return (
+            f"Com essa cotacao, {format_brl(amount)} equivalem a aproximadamente "
+            f"{format_foreign(converted, currency)}."
+        )
+    converted = amount * rate
+    return (
+        f"Com essa cotacao, {format_foreign(amount, currency)} equivalem a aproximadamente "
+        f"{format_brl(converted)}."
+    )

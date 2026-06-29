@@ -331,9 +331,12 @@ def interview_result_response(
     )
 
 
-def exchange_response(*, answer: str, source: str | None) -> str:
+def exchange_response(*, answer: str, source: str | None, conversion: str | None = None) -> str:
+    parts = [answer]
+    if conversion:
+        parts.append(conversion)
     source_text = f" Fonte: {source}." if source else ""
-    return f"{answer}{source_text} Posso te ajudar em mais alguma coisa?"
+    return f"{' '.join(parts)}{source_text} Posso te ajudar em mais alguma coisa?"
 
 
 def normalize_response_text(text: str) -> str:

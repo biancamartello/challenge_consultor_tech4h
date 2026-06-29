@@ -78,6 +78,25 @@ def test_busca_cotacao_returns_quote(monkeypatch):
     assert "https://example.com/eur" in out["response"]
 
 
+def test_busca_cotacao_converts_brl_amount_to_foreign_currency(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "src.tools.exchange.search_exchange_rate",
+        _fake_quote(answer="1 EUR equivale a 5,92 BRL.", source_url="https://example.com/eur"),
+    )
+
+    out = busca_cotacao(
+        {
+            "currency": "EUR",
+            "user_input": "Quanto que e 100 mil reais em euro?",
+        }
+    )
+
+    assert "5,92" in out["response"]
+    assert "R$ 100.000,00" in out["response"]
+    assert "16.891,89 EUR" in out["response"]
+
+
 def test_busca_cotacao_handles_lookup_error(monkeypatch):
     def fake_search(*_args, **_kwargs):
         raise ExchangeLookupError("sem dados")

@@ -22,7 +22,11 @@ from src.llm import optional_chat_model
 from src.tools.exchange import (
     ExchangeConfigurationError,
     ExchangeLookupError,
+    build_conversion_message,
     consultar_cotacao,
+    detect_conversion_direction,
+    extract_conversion_amount,
+    parse_unit_rate,
 )
 
 
@@ -116,6 +120,7 @@ def _responder_pt_br(answer: str) -> str:
 
 def busca_cotacao(state: ExchangeState) -> ExchangeState:
     currency = state.get("currency") or "USD"
+    user_input = state.get("user_input", "")
     try:
         result = consultar_cotacao.invoke({"moeda": currency})
     except (ExchangeConfigurationError, ExchangeLookupError) as exc:
@@ -124,7 +129,27 @@ def busca_cotacao(state: ExchangeState) -> ExchangeState:
     except Exception:
         logger.exception("exchange subgraph failure")
         return {"response": "Tive um problema ao consultar a cotacao agora. Pode tentar novamente em instantes?"}
-    return {"response": exchange_response(answer=_responder_pt_br(result["answer"]), source=result["source_url"] or "Tavily")}
+
+    answer_pt = _responder_pt_br(result["answer"])
+    amount = extract_conversion_amount(user_input)
+    direction = detect_conversion_direction(user_input, currency)
+    rate = parse_unit_rate(result["answer"], currency)
+    conversion = None
+    if amount is not None and rate is not None:
+        conversion = build_conversion_message(
+            amount=amount,
+            direction=direction,
+            currency=currency,
+            rate=rate,
+        )
+
+    return {
+        "response": exchange_response(
+            answer=answer_pt,
+            source=result["source_url"] or "Tavily",
+            conversion=conversion,
+        )
+    }
 
 
 def _build_exchange_app():
