@@ -4,7 +4,7 @@
 [![LangGraph](https://img.shields.io/badge/LangGraph-agentic_workflow-1C3C3C)](https://www.langchain.com/langgraph)
 [![LangSmith](https://img.shields.io/badge/LangSmith-observability_&_evals-1C3C3C)](https://www.langchain.com/langsmith)
 [![Streamlit](https://img.shields.io/badge/Streamlit-chat_UI-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Tests](https://img.shields.io/badge/tests-40_passed-brightgreen)](#tutorial-de-execucao-e-testes)
+[![Tests](https://img.shields.io/badge/tests-50_passed-brightgreen)](#tutorial-de-execucao-e-testes)
 
 **Tags:** `langgraph` `langsmith` `openrouter` `deepseek` `streamlit` `tavily` `ai-agents` `sdd` `evals`
 
