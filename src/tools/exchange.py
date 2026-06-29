@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from langchain_core.tools import tool
+
 
 @dataclass(frozen=True)
 class ExchangeQuote:
@@ -65,3 +67,20 @@ def _build_tavily_client(api_key: str | None = None):
     from tavily import TavilyClient
 
     return TavilyClient(api_key=resolved_key)
+
+
+@tool
+def consultar_cotacao(moeda: str, moeda_base: str = "BRL") -> dict:
+    """Consulta a cotacao atual de uma moeda estrangeira em tempo real.
+
+    TODO (ponto de contribuicao): refine esta docstring. E ela que o LLM le
+    para decidir CHAMAR a tool e qual `moeda` extrair da fala do cliente.
+    Considere: mapear "dolar"->USD, "euro"->EUR, "libra"->GBP; quando NAO
+    chamar; e como exemplificar. Em `moeda`, use sempre codigo ISO de 3 letras.
+
+    Args:
+        moeda: codigo ISO da moeda desejada (ex.: "USD", "EUR", "GBP").
+        moeda_base: codigo ISO da moeda base da conversao (default "BRL").
+    """
+    quote = search_exchange_rate(moeda, moeda_base)
+    return {"answer": quote.answer, "source_url": quote.source_url}

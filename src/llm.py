@@ -24,6 +24,21 @@ def get_chat_model(temperature: float = 0):
     )
 
 
+def optional_chat_model(temperature: float = 0):
+    """Retorna um chat model quando o OpenRouter esta configurado, senao None.
+
+    Permite que os chamadores caiam em logica deterministica (regex/keywords)
+    quando nao ha API key ou ocorre falha tecnica, mantendo o sistema testavel
+    offline.
+    """
+    if not os.getenv("OPENROUTER_API_KEY"):
+        return None
+    try:
+        return get_chat_model(temperature=temperature)
+    except Exception:
+        return None
+
+
 @lru_cache(maxsize=8)
 def _get_cached_chat_model(*, model: str, api_key: str, temperature: float):
     from langchain_openai import ChatOpenAI
