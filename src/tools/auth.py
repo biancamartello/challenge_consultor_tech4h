@@ -26,8 +26,10 @@ def normalize_cpf(cpf: str) -> str:
 
 def normalize_birth_date(value: str) -> str:
     value = value.strip()
-    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", value):
-        day, month, year = value.split("/")
+    if re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{4}", value):
+        day, month, year = re.split(r"[/-]", value)
+        day = day.zfill(2)
+        month = month.zfill(2)
         return f"{year}-{month}-{day}"
     return value
 
