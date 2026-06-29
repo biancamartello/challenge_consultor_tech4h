@@ -417,33 +417,33 @@ def credit_node(state: AgentState) -> AgentState:
         return {"response": credit_interview_offer_response(history=_conversation_history(state), client_name=_client_name(state))}
 
     try:
-        requested_limit = state.get("requested_limit") or extract_requested_limit(user_input)
+        requested_limit = extract_requested_limit(user_input)
         credit_action = _classify_credit_action(user_input, requested_limit=requested_limit, active_flow=flow)
 
-        if credit_action == "increase_limit" and not requested_limit:
-            current_limit = get_current_limit(cpf, CLIENTS_PATH)
-            max_allowed = _max_allowed_limit_for_client(cpf)
-            if max_allowed is not None and max_allowed <= current_limit:
+        if credit_action == "increase_limit":
+            if not requested_limit:
+                current_limit = get_current_limit(cpf, CLIENTS_PATH)
+                max_allowed = _max_allowed_limit_for_client(cpf)
+                if max_allowed is not None and max_allowed <= current_limit:
+                    return {
+                        "active_flow": "credit_interview_offer",
+                        "credit_status": "rejeitado",
+                        "response": credit_increase_not_possible_response(
+                            current_limit=current_limit,
+                            history=_conversation_history(state),
+                            client_name=_client_name(state),
+                        ),
+                    }
                 return {
-                    "active_flow": "credit_interview_offer",
-                    "credit_status": "rejeitado",
-                    "response": credit_increase_not_possible_response(
+                    "active_flow": "credit_increase",
+                    "response": credit_increase_guidance_response(
                         current_limit=current_limit,
+                        max_allowed_limit=max_allowed,
                         history=_conversation_history(state),
                         client_name=_client_name(state),
                     ),
                 }
-            return {
-                "active_flow": "credit_increase",
-                "response": credit_increase_guidance_response(
-                    current_limit=current_limit,
-                    max_allowed_limit=max_allowed,
-                    history=_conversation_history(state),
-                    client_name=_client_name(state),
-                ),
-            }
 
-        if requested_limit:
             decision = request_credit_increase(
                 cpf,
                 requested_limit,

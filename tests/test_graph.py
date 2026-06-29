@@ -289,6 +289,59 @@ def test_credit_flow_processes_k_amount_and_offers_interview(tmp_path, monkeypat
     assert state["active_flow"] == "credit_interview_offer"
 
 
+def test_credit_node_does_not_resubmit_after_approval(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clients_path = tmp_path / "clientes.csv"
+    score_path = tmp_path / "score_limite.csv"
+    requests_path = tmp_path / "solicitacoes.csv"
+    _write_clients(clients_path, score="650", limite="2500.00")
+    _write_score_table(score_path)
+
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+    monkeypatch.setattr(graph_module, "SCORE_LIMIT_PATH", score_path)
+    monkeypatch.setattr(graph_module, "REQUESTS_PATH", requests_path)
+
+    real_request = graph_module.request_credit_increase
+    calls = []
+
+    def counting_request(*args, **kwargs):
+        calls.append(args)
+        return real_request(*args, **kwargs)
+
+    monkeypatch.setattr(graph_module, "request_credit_increase", counting_request)
+
+    approved = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "user_input": "quero aumentar para 4 mil",
+            "intent": "credit",
+        }
+    )
+    assert approved["credit_status"] == "aprovado"
+    assert len(calls) == 1
+
+    # turno seguinte: apenas consulta, mas o requested_limit aprovado segue no estado
+    follow_up = credit_node(
+        {
+            "authenticated": True,
+            "cpf": "12345678900",
+            "requested_limit": approved["requested_limit"],
+            "credit_status": "aprovado",
+            "active_flow": "",
+            "user_input": "qual e meu limite?",
+            "intent": "credit",
+        }
+    )
+
+    # nao deve re-submeter: so a aprovacao original foi registrada
+    assert len(calls) == 1
+    assert "response" in follow_up
+    with requests_path.open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert len(rows) == 1
+
+
 def test_extract_requested_limit_uses_llm_for_written_amount():
     assert extract_requested_limit("quero uns cinco mil", llm=FakeAmountLLM(5000)) == 5000
 
