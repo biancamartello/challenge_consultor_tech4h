@@ -71,15 +71,17 @@ def _build_tavily_client(api_key: str | None = None):
 
 @tool
 def consultar_cotacao(moeda: str, moeda_base: str = "BRL") -> dict:
-    """Consulta a cotacao atual de uma moeda estrangeira em tempo real (via Tavily).
+    """Consulta a cotacao atual de QUALQUER moeda estrangeira em tempo real (via Tavily).
 
-    Chame esta tool quando o cliente pedir a cotacao ou o valor de uma moeda
-    (dolar, euro, libra, cambio). Traduza o nome falado para o codigo ISO de 3
-    letras em `moeda`: dolar -> USD, euro -> EUR, libra -> GBP. Se o cliente nao
-    especificar a moeda, use USD. Nao invente a cotacao: sempre acione a tool.
+    Chame esta tool sempre que o cliente pedir a cotacao ou o valor de uma moeda.
+    Em `moeda`, informe o codigo ISO de 3 letras correspondente ao que o cliente
+    citou: dolar -> USD, euro -> EUR, libra -> GBP, iene -> JPY, peso argentino ->
+    ARS, franco suico -> CHF, dolar canadense -> CAD. Para qualquer outra moeda, use
+    o codigo ISO de 3 letras adequado. Se o cliente nao especificar, use USD.
+    Nao invente a cotacao: sempre acione a tool.
 
     Args:
-        moeda: codigo ISO de 3 letras da moeda desejada (ex.: USD, EUR, GBP).
+        moeda: codigo ISO de 3 letras da moeda desejada (ex.: USD, EUR, GBP, JPY, CHF).
         moeda_base: codigo ISO da moeda base da conversao (default BRL).
     """
     quote = search_exchange_rate(moeda, moeda_base)

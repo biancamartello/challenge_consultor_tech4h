@@ -30,10 +30,21 @@ logger = logging.getLogger("banco_agil")
 
 
 CURRENCY_TOOL_PROMPT = (
-    "Voce e o agente de cambio do Banco Agil. Quando o cliente perguntar sobre "
-    "cotacao de moeda, chame a tool consultar_cotacao com o codigo ISO de 3 letras "
-    "da moeda (dolar=USD, euro=EUR, libra=GBP). Se nenhuma moeda for citada, use USD. "
-    "Nao invente a cotacao: sempre acione a tool."
+    "Voce e o agente de cambio do Banco Agil. Quando o cliente perguntar sobre a "
+    "cotacao de qualquer moeda, chame a tool consultar_cotacao informando o codigo "
+    "ISO de 3 letras da moeda citada (ex.: dolar=USD, euro=EUR, libra=GBP, iene=JPY, "
+    "peso argentino=ARS, franco suico=CHF, dolar canadense=CAD). Para qualquer outra "
+    "moeda, use o codigo ISO de 3 letras correspondente. Se nenhuma moeda for citada, "
+    "use USD. Nao invente a cotacao: sempre acione a tool."
+)
+
+# Reescreve a resposta da Tavily (que vem em ingles) para pt-BR, preservando numeros.
+RESPONSE_PT_PROMPT = (
+    "Voce e a atendente de cambio do Banco Agil. Reescreva em portugues do Brasil, de "
+    "forma curta e cordial, a informacao de cotacao a seguir. PRESERVE exatamente os "
+    "valores numericos, as moedas e as taxas como aparecem no texto original: nao "
+    "recalcule, nao arredonde e nao invente numeros. Responda apenas com a frase final, "
+    "sem listas nem formatacao."
 )
 
 
@@ -43,12 +54,22 @@ class ExchangeState(TypedDict, total=False):
     response: str
 
 
+_CURRENCY_KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("euro", "eur"), "EUR"),
+    (("libra", "esterlina", "gbp"), "GBP"),
+    (("iene", "yen", "jpy"), "JPY"),
+    (("franco", "suico", "suíço", "chf"), "CHF"),
+    (("peso argentino", "ars"), "ARS"),
+    (("dolar canadense", "dólar canadense", "cad"), "CAD"),
+    (("dolar", "dólar", "usd"), "USD"),
+)
+
+
 def _extract_currency(text: str) -> str:
     normalized = text.lower()
-    if "euro" in normalized or "eur" in normalized:
-        return "EUR"
-    if "libra" in normalized or "gbp" in normalized:
-        return "GBP"
+    for terms, code in _CURRENCY_KEYWORDS:
+        if any(term in normalized for term in terms):
+            return code
     match = re.search(r"\b[A-Z]{3}\b", text.upper())
     return match.group(0) if match else "USD"
 
@@ -76,6 +97,23 @@ def extrai_moeda(state: ExchangeState) -> ExchangeState:
     return {"currency": _extract_currency(user_input)}
 
 
+def _responder_pt_br(answer: str) -> str:
+    """Reescreve o texto da cotacao (em ingles) para pt-BR preservando os numeros.
+
+    Usa temperatura 0 e instrucao explicita de nao alterar valores. Se nao houver LLM
+    configurado (offline/testes) ou ocorrer falha, retorna o texto original intacto.
+    """
+    model = optional_chat_model()
+    if model is None:
+        return answer
+    try:
+        response = model.invoke([("system", RESPONSE_PT_PROMPT), ("human", answer)])
+    except Exception:
+        return answer
+    text = str(getattr(response, "content", "")).strip()
+    return text or answer
+
+
 def busca_cotacao(state: ExchangeState) -> ExchangeState:
     currency = state.get("currency") or "USD"
     try:
@@ -86,7 +124,7 @@ def busca_cotacao(state: ExchangeState) -> ExchangeState:
     except Exception:
         logger.exception("exchange subgraph failure")
         return {"response": "Tive um problema ao consultar a cotacao agora. Pode tentar novamente em instantes?"}
-    return {"response": exchange_response(answer=result["answer"], source=result["source_url"] or "Tavily")}
+    return {"response": exchange_response(answer=_responder_pt_br(result["answer"]), source=result["source_url"] or "Tavily")}
 
 
 def _build_exchange_app():
