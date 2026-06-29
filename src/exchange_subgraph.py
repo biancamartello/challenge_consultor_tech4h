@@ -29,12 +29,11 @@ from src.tools.exchange import (
 logger = logging.getLogger("banco_agil")
 
 
-# TODO (ponto de contribuicao): este prompt, junto com a docstring de
-# consultar_cotacao, guia o LLM a decidir CHAMAR a tool e qual moeda extrair.
 CURRENCY_TOOL_PROMPT = (
     "Voce e o agente de cambio do Banco Agil. Quando o cliente perguntar sobre "
     "cotacao de moeda, chame a tool consultar_cotacao com o codigo ISO de 3 letras "
-    "da moeda (ex.: dolar=USD, euro=EUR, libra=GBP). Se nenhuma moeda for citada, use USD."
+    "da moeda (dolar=USD, euro=EUR, libra=GBP). Se nenhuma moeda for citada, use USD. "
+    "Nao invente a cotacao: sempre acione a tool."
 )
 
 

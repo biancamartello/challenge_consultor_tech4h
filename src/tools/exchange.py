@@ -71,16 +71,16 @@ def _build_tavily_client(api_key: str | None = None):
 
 @tool
 def consultar_cotacao(moeda: str, moeda_base: str = "BRL") -> dict:
-    """Consulta a cotacao atual de uma moeda estrangeira em tempo real.
+    """Consulta a cotacao atual de uma moeda estrangeira em tempo real (via Tavily).
 
-    TODO (ponto de contribuicao): refine esta docstring. E ela que o LLM le
-    para decidir CHAMAR a tool e qual `moeda` extrair da fala do cliente.
-    Considere: mapear "dolar"->USD, "euro"->EUR, "libra"->GBP; quando NAO
-    chamar; e como exemplificar. Em `moeda`, use sempre codigo ISO de 3 letras.
+    Chame esta tool quando o cliente pedir a cotacao ou o valor de uma moeda
+    (dolar, euro, libra, cambio). Traduza o nome falado para o codigo ISO de 3
+    letras em `moeda`: dolar -> USD, euro -> EUR, libra -> GBP. Se o cliente nao
+    especificar a moeda, use USD. Nao invente a cotacao: sempre acione a tool.
 
     Args:
-        moeda: codigo ISO da moeda desejada (ex.: "USD", "EUR", "GBP").
-        moeda_base: codigo ISO da moeda base da conversao (default "BRL").
+        moeda: codigo ISO de 3 letras da moeda desejada (ex.: USD, EUR, GBP).
+        moeda_base: codigo ISO da moeda base da conversao (default BRL).
     """
     quote = search_exchange_rate(moeda, moeda_base)
     return {"answer": quote.answer, "source_url": quote.source_url}
