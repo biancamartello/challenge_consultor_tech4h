@@ -170,6 +170,81 @@ def test_triage_authenticates_with_brazilian_dash_birth_date(tmp_path, monkeypat
     assert response["client"]["nome"] == "Bianca"
 
 
+def test_triage_rejects_wrong_credentials_and_counts_attempt(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "meu cpf e 00000000000 e nasci em 01/01/2000",
+        }
+    )
+
+    assert response["authenticated"] is False
+    assert response["auth_attempts"] == 1
+    assert not response.get("should_end")
+    assert "response" in response
+
+
+def test_triage_ends_after_third_failed_attempt(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    clients_path = tmp_path / "clientes.csv"
+    _write_clients(clients_path)
+    monkeypatch.setattr(graph_module, "CLIENTS_PATH", clients_path)
+
+    # ja houve duas falhas; esta e a terceira tentativa consecutiva
+    response = triage_node(
+        {
+            "authenticated": False,
+            "auth_attempts": 2,
+            "user_input": "meu cpf e 00000000000 e nasci em 01/01/2000",
+        }
+    )
+
+    assert response["auth_attempts"] == 3
+    assert response["should_end"] is True
+
+
+def test_triage_asks_for_missing_credentials_when_only_cpf(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "oi, meu cpf e 12345678900",
+        }
+    )
+
+    assert response["authenticated"] is False
+    assert response["cpf"] == "12345678900"
+    assert response["birth_date"] == ""
+    assert response["missing_credentials_count"] == 1
+    assert "response" in response
+
+
+def test_triage_handles_authentication_error_gracefully(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("base de clientes indisponivel")
+
+    monkeypatch.setattr(graph_module, "authenticate_client", boom)
+
+    response = triage_node(
+        {
+            "authenticated": False,
+            "user_input": "meu cpf e 12345678900 e nasci em 10/05/1990",
+        }
+    )
+
+    # erro controlado: conversa segue, sem expor exception nem autenticar
+    assert "validar" in response["response"].lower()
+    assert response.get("authenticated") is not True
+
+
 def test_rejected_credit_increase_offers_interview_consent(tmp_path, monkeypatch):
     clients_path = tmp_path / "clientes.csv"
     score_path = tmp_path / "score_limite.csv"

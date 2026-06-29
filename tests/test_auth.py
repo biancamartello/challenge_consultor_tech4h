@@ -1,6 +1,8 @@
 import csv
 
-from src.tools.auth import authenticate_client
+import pytest
+
+from src.tools.auth import AuthenticationDataError, authenticate_client
 
 
 def write_clients(path):
@@ -60,3 +62,10 @@ def test_rejects_client_when_birth_date_does_not_match(tmp_path):
 
     assert result.authenticated is False
     assert result.client is None
+
+
+def test_raises_when_clients_csv_is_missing(tmp_path):
+    missing_path = tmp_path / "nao_existe.csv"
+
+    with pytest.raises(AuthenticationDataError):
+        authenticate_client("12345678900", "1990-05-10", missing_path)
